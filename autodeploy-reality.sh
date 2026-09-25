@@ -79,21 +79,82 @@ install_dependencies() {
         fi
     done
 
-    # 检查并安装 Sing-box
+    # 检查并安装 Sing-box（改为从 GitHub Release 下载 + 验证，不再依赖 sing-box.app）
+    install_sing_box
+}
+
+install_sing_box() {
+    # 从 GitHub Release 下载 sing-box 并验证（不再依赖 sing-box.app，也不再用管道吃掉失败）
     if command -v sing-box &> /dev/null; then
         print_success "Sing-box 已安装 ($(sing-box version 2>/dev/null | head -n1))"
     else
-        print_info "安装 Sing-box..."
-        if curl -fsSL https://sing-box.app/install.sh | sh; then
-            print_success "Sing-box 安装完成"
-        else
-            print_error "安装失败！请检查网络连接或手动安装"
+        print_info "安装 Sing-box(从 GitHub Release)..."
+        local arch api_ver ver url tmp
+        case "$(uname -m)" in
+            x86_64|amd64)  arch="amd64" ;;
+            aarch64|arm64) arch="arm64" ;;
+            armv7l)        arch="armv7" ;;
+            *) print_error "不支持的 CPU 架构: $(uname -m)"; exit 1 ;;
+        esac
+        api_ver=$(curl -fsSL --max-time 20 https://api.github.com/repos/SagerNet/sing-box/releases/latest 2>/dev/null | jq -r '.tag_name // empty')
+        if [[ -z "$api_ver" ]]; then
+            print_error "无法从 GitHub API 获取 sing-box 版本(网络不通?)"
             exit 1
         fi
+        ver="${api_ver#v}"
+        url="https://github.com/SagerNet/sing-box/releases/download/${api_ver}/sing-box-${ver}-linux-${arch}.tar.gz"
+        tmp="$(mktemp -d)"
+        print_info "下载 $url"
+        if ! curl -fL --connect-timeout 15 --max-time 300 -o "$tmp/sb.tar.gz" "$url"; then
+            print_error "sing-box 下载失败: $url"
+            rm -rf "$tmp"; exit 1
+        fi
+        if ! tar -xzf "$tmp/sb.tar.gz" -C "$tmp"; then
+            print_error "sing-box 解压失败(压缩包可能损坏)"
+            rm -rf "$tmp"; exit 1
+        fi
+        local bin
+        bin="$(find "$tmp" -type f -name sing-box -perm -u+x | head -n1)"
+        [[ -n "$bin" ]] || { print_error "压缩包里找不到 sing-box 可执行文件"; rm -rf "$tmp"; exit 1; }
+        install -m 0755 "$bin" /usr/local/bin/sing-box
+        rm -rf "$tmp"
+        if ! command -v sing-box &> /dev/null; then
+            print_error "sing-box 安装后仍找不到可执行文件"
+            exit 1
+        fi
+        if ! sing-box version >/dev/null 2>&1; then
+            print_error "sing-box 无法运行(version 检查失败)"
+            exit 1
+        fi
+        print_success "Sing-box 安装完成: $(sing-box version | head -n1)"
+    fi
+
+    # 确保 systemd 单元存在（sing-box.app 的安装器才负责创建，这里自己写一份）
+    if [[ ! -f /etc/systemd/system/sing-box.service ]]; then
+        cat > /etc/systemd/system/sing-box.service <<'UNIT'
+[Unit]
+Description=sing-box service
+Documentation=https://sing-box.sagernet.org
+After=network.target nss-lookup.target
+
+[Service]
+User=root
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW
+ExecStart=/usr/local/bin/sing-box run -c /etc/sing-box/config.json
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+        systemctl daemon-reload 2>/dev/null || true
+        print_success "已创建 sing-box.service"
     fi
 }
 
-gen_ss2022_key() { openssl rand -base64 16; }
+gen_ss2022_key() { openssl rand -base64 32; }
 
 # 生成 UUID（优先使用 sing-box，回退到 /proc）
 gen_uuid() {
@@ -511,7 +572,7 @@ logic_B() {
             tag: $tag,
             listen: "::",
             listen_port: ($port|tonumber),
-            method: "2022-blake3-aes-128-gcm",
+            method: "2022-blake3-chacha20-poly1305",
             password: $pass,
             multiplex: { enabled: false, padding: false }
         }')
@@ -560,14 +621,14 @@ logic_B() {
         pub_ip=$(prompt_public_host "B 端")
 
         # 生成 SS URI
-        ss_uri=$(gen_ss_uri "2022-blake3-aes-128-gcm" "$local_ss_pass" "$pub_ip" "$local_port" "$node_name")
+        ss_uri=$(gen_ss_uri "2022-blake3-chacha20-poly1305" "$local_ss_pass" "$pub_ip" "$local_port" "$node_name")
 
         print_success "Route Added! You can run this again to add another C."
         print_card "Client Config (Give to User)" \
             "B Host     : $pub_ip" \
             "B Port     : $local_port" \
             "Password   : $local_ss_pass" \
-            "Method     : 2022-blake3-aes-128-gcm" \
+            "Method     : 2022-blake3-chacha20-poly1305" \
             "Tag        : $ib_tag → $ob_tag"
 
         # 打印 SS URI
