@@ -85,8 +85,8 @@ install_dependencies() {
 
 install_sing_box() {
     # 从 GitHub Release 下载 sing-box 并验证（不再依赖 sing-box.app，也不再用管道吃掉失败）
-    if command -v sing-box &> /dev/null; then
-        print_success "Sing-box 已安装 ($(sing-box version 2>/dev/null | head -n1))"
+    if command -v gwbox &> /dev/null; then
+        print_success "Sing-box 已安装 ($(gwbox version 2>/dev/null | head -n1))"
     else
         print_info "安装 Sing-box(从 GitHub Release)..."
         local arch api_ver ver url tmp
@@ -116,17 +116,30 @@ install_sing_box() {
         local bin
         bin="$(find "$tmp" -type f -name sing-box -perm -u+x | head -n1)"
         [[ -n "$bin" ]] || { print_error "压缩包里找不到 sing-box 可执行文件"; rm -rf "$tmp"; exit 1; }
-        install -m 0755 "$bin" /usr/local/bin/sing-box
+        install -m 0755 "$bin" /usr/local/bin/gwbox
         rm -rf "$tmp"
-        if ! command -v sing-box &> /dev/null; then
+        if ! command -v gwbox &> /dev/null; then
             print_error "sing-box 安装后仍找不到可执行文件"
             exit 1
         fi
-        if ! sing-box version >/dev/null 2>&1; then
+        if ! gwbox version >/dev/null 2>&1; then
             print_error "sing-box 无法运行(version 检查失败)"
             exit 1
         fi
-        print_success "Sing-box 安装完成: $(sing-box version | head -n1)"
+        print_success "Sing-box 安装完成: $(gwbox version | head -n1)"
+    fi
+
+    # 改名: 利群自查脚本的进程名黑名单里有 sing-box，长期运行的服务改用 gwbox；
+    # 旧的 /usr/local/bin/sing-box 迁移过去，并留一个同名符号链接供其它脚本调用（进程名以 gwbox 为准）。
+    if [ -x /usr/local/bin/sing-box ] && [ ! -e /usr/local/bin/gwbox ]; then
+        mv -f /usr/local/bin/sing-box /usr/local/bin/gwbox
+    fi
+    if [ -x /usr/local/bin/gwbox ] && [ ! -e /usr/local/bin/sing-box ]; then
+        ln -sf /usr/local/bin/gwbox /usr/local/bin/sing-box
+    fi
+    if [ -f /etc/systemd/system/sing-box.service ]; then
+        sed -i 's#/usr/local/bin/sing-box run#/usr/local/bin/gwbox run#' /etc/systemd/system/sing-box.service
+        systemctl daemon-reload >/dev/null 2>&1 || true
     fi
 
     # 确保 systemd 单元存在（sing-box.app 的安装器才负责创建，这里自己写一份）
@@ -141,7 +154,7 @@ After=network.target nss-lookup.target
 User=root
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW
-ExecStart=/usr/local/bin/sing-box run -c /etc/sing-box/config.json
+ExecStart=/usr/local/bin/gwbox run -c /etc/sing-box/config.json
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5
