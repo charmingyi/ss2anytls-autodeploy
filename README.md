@@ -6,9 +6,19 @@ Autodeploy ss-anytls tunnel between server B (relay) &amp; C (exit) with sing-bo
 ## 一键脚本
 
 ```bash
-curl -O https://raw.githubusercontent.com/Cyli00/ss2anytls-autodeploy/refs/heads/main/autodeploy.sh
-chmod +x autodeploy.sh
-bash autodeploy.sh
+bash <(curl -fsSL https://raw.githubusercontent.com/charmingyi/ss2anytls-autodeploy/main/autodeploy.sh)
+```
+
+如需 Reality 版本，运行：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/charmingyi/ss2anytls-autodeploy/main/autodeploy-reality.sh)
+```
+
+Alpine Linux 用户请使用 Alpine 专用脚本：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/charmingyi/ss2anytls-autodeploy/main/autodeploy-alpine.sh)
 ```
 
 ## 模式说明
